@@ -7,7 +7,7 @@ from ant_maze_env import *
 import pickle
 
 
-# run the GA with novelty search
+# run the GA with novelty search, dynamic weights on reward and novelty
 # 2020-2-8
 class HP:
     def __init__(self, env, seed=1, input_dim=None, output_dim=None, hidden_size=64):
@@ -90,7 +90,7 @@ class Policy:
                 reward = 0
             else:
                 reward = -1
-            #reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
+            # reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
             obs = next_obs
             total_reward += reward
             if done:
@@ -109,12 +109,17 @@ restart_file_name = 'novelty_search_final_population'
 episode_num = 1500
 seed = 1
 
-hp = HP(env=env, input_dim=30, output_dim=8,seed=seed)
+hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
 ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.2)
 
 all_data = []
 final_pos = []
+
+t_best = 0
+sigma = 0.05
+weight = 1
+best_reward = -100000
 for episode in range(episode_num):
     start_time = datetime.datetime.now()
     if RESTART:
@@ -129,17 +134,29 @@ for episode in range(episode_num):
         novelty.append(n)
         reward.append(r)
         position.append(last_position)
-    fitness = novelty
+    fitness = [(1 - weight) * novelty[_] + weight * reward[_] for _ in range(len(novelty))]
     ga.tell(population, fitness)
     best_index = np.argmax(fitness)
+    if reward[best_index] > best_reward:
+        best_reward = reward[best_index]
+        weight = np.minimum(1, weight + sigma)
+        t_best = 0
+    else:
+        t_best += 1
+    if t_best >= 20:
+        weight = np.maximum(0, weight - sigma)
+        t_best = 0
     all_data.append(
-        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index]})
+        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index], 'best_novelty':
+            novelty[best_index]})
     final_pos.append(position[best_index])
     print('######')
     print('Episode ', episode)
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
+    print('Novelty: ', novelty[best_index])
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open('ns_reward_'+str(seed), mode='wb'))
-pickle.dump(final_pos, open('ns_final_pos_'+str(seed), mode='wb'))
-pickle.dump(population, open('ns_final_population_'+str(seed), mode='wb'))
+    print('weight:', weight)
+pickle.dump(all_data, open('ns_reward_dynamic_' + str(seed), mode='wb'))
+pickle.dump(final_pos, open('ns_final_pos_dynamic_' + str(seed), mode='wb'))
+pickle.dump(population, open('ns_final_population_dynamic_' + str(seed), mode='wb'))
