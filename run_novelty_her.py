@@ -106,11 +106,11 @@ env = AntMazeEnv(maze_id='Maze')
 
 hp = HP(env=env, input_dim=30, output_dim=8)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=1000, elite_frac=0.01, mut_rate=0.2)
+ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_rate=0.2)
 
 all_data = []
 final_pos = []
-for episode in range(50):
+for episode in range(1000):
     start_time = datetime.datetime.now()
     population = ga.ask()
     reward = []

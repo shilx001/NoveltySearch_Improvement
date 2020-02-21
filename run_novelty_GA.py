@@ -86,13 +86,11 @@ class Policy:
             # env.render()
             action = self.evaluate(obs)
             next_obs, reward, done, _ = env.step(action)
-            '''
             if np.sqrt(np.sum(np.square(next_obs[:2] - target_goal))) < 0.1:
                 reward = 0
             else:
                 reward = -1
-            '''
-            reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
+            #reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
             obs = next_obs
             total_reward += reward
             if done:
@@ -107,18 +105,20 @@ class Policy:
 
 env = AntMazeEnv(maze_id='Maze')
 RESTART = False
-file_name = 'novelty_search_final_population'
+restart_file_name = 'novelty_search_final_population'
+episode_num = 1500
+seed = 1
 
-hp = HP(env=env, input_dim=30, output_dim=8)
+hp = HP(env=env, input_dim=30, output_dim=8,seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.1, mut_rate=0.2)
+ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.2)
 
 all_data = []
 final_pos = []
-for episode in range(1000):
+for episode in range(episode_num):
     start_time = datetime.datetime.now()
     if RESTART:
-        population = pickle.load(open(file_name, mode='rb'))
+        population = pickle.load(open(restart_file_name, mode='rb'))
     else:
         population = ga.ask()
     reward = []
@@ -140,6 +140,6 @@ for episode in range(1000):
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open('novelty_search_reward', mode='wb'))
-pickle.dump(final_pos, open('novelty_search_final_pos', mode='wb'))
-pickle.dump(population, open('novelty_search_final_population', mode='wb'))
+pickle.dump(all_data, open('ns_reward_'+str(seed), mode='wb'))
+pickle.dump(final_pos, open('ns_final_pos'+str(seed), mode='wb'))
+pickle.dump(population, open('ns_final_population'+str(seed), mode='wb'))
