@@ -99,7 +99,6 @@ class Policy:
             novelty = self.hp.cal_novelty(obs[:2])
         else:
             novelty = 0
-        self.hp.archive.append(obs[:2])
         return novelty, total_reward, obs[:2]
 
 
@@ -111,14 +110,14 @@ seed = 1
 
 hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.2)
+ga = GA(num_params=policy.get_params_count(), pop_size=5, elite_frac=0.2, mut_rate=0.2)
 
 all_data = []
 final_pos = []
 
 t_best = 0
 sigma = 0.05
-weight = 1
+weight = 0
 best_reward = -100000
 for episode in range(episode_num):
     start_time = datetime.datetime.now()
@@ -135,6 +134,8 @@ for episode in range(episode_num):
         reward.append(r)
         position.append(last_position)
     fitness = [(1 - weight) * novelty[_] + weight * reward[_] for _ in range(len(novelty))]
+    for p in position:
+        policy.hp.archive.append(p)#update novelty archive
     ga.tell(population, fitness)
     best_index = np.argmax(fitness)
     if reward[best_index] > best_reward:
