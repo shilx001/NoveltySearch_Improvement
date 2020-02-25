@@ -34,8 +34,8 @@ class Policy:
         # 根据parameter初始化
         self.hp = hp
         self.input_dim, self.output_dim, self.hidden_size = hp.input_dim, hp.output_dim, hp.hidden_size
-        self.param_count = hp.input_dim * hp.hidden_size + 2 * hp.hidden_size + hp.hidden_size * hp.hidden_size + hp.hidden_size * (
-            1 + hp.output_dim)
+        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size + \
+                           self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
         if params is not None:
             assert len(params) == self.param_count
         self.params = params
@@ -51,7 +51,7 @@ class Policy:
         param_list = self.get_detail_params()
         l1 = tf.nn.relu(tf.matmul(feed_state, param_list[0]) + param_list[1])
         l2 = tf.nn.relu(tf.matmul(l1, param_list[2])) + param_list[3]
-        output_action = tf.nn.tanh(tf.matmul(l2, param_list[4]) + param_list[5])
+        output_action = tf.nn.tanh(tf.matmul(l2, param_list[4]) + param_list[5])*30
         return sess.run(output_action, feed_dict={feed_state: input_state})
 
     def evaluate(self, state):
@@ -90,7 +90,7 @@ class Policy:
                 reward = 0
             else:
                 reward = -1
-            #reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
+            # reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
             obs = next_obs
             total_reward += reward
             if done:
@@ -105,12 +105,12 @@ class Policy:
 env = AntMazeEnv(maze_id='Maze')
 RESTART = False
 restart_file_name = 'novelty_search_final_population'
-episode_num = 1500
+episode_num = 1000
 seed = 1
 
-hp = HP(env=env, input_dim=30, output_dim=8,seed=seed)
+hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_rate=0.2)
+ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.9)
 
 all_data = []
 final_pos = []
@@ -130,7 +130,7 @@ for episode in range(episode_num):
         position.append(last_position)
     fitness = novelty
     for p in position:
-        policy.hp.archive.append(p)#update novelty archive
+        policy.hp.archive.append(p)  # update novelty archive
     ga.tell(population, fitness)
     best_index = np.argmax(fitness)
     all_data.append(
@@ -141,6 +141,6 @@ for episode in range(episode_num):
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open('ns_reward_'+str(seed), mode='wb'))
-pickle.dump(final_pos, open('ns_final_pos_'+str(seed), mode='wb'))
-pickle.dump(population, open('ns_final_population_'+str(seed), mode='wb'))
+pickle.dump(all_data, open('ns_reward_' + str(seed), mode='wb'))
+pickle.dump(final_pos, open('ns_final_pos_' + str(seed), mode='wb'))
+pickle.dump(population, open('ns_final_population_' + str(seed), mode='wb'))

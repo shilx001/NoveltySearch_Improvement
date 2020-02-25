@@ -3,9 +3,10 @@ import gym
 import collections
 import datetime
 import tensorflow as tf
-#from algorithms.td3_network import *
+# from algorithms.td3_network import *
 from ant_maze_env import *
 import pickle
+
 
 # from td3_network import *
 
@@ -47,13 +48,13 @@ class HP:
         self.batch_size = batch_size
         self.sess = tf.Session()
         # self.replay_buffer = utils.ReplayBuffer()
-        #self.actor = Actor(self.sess, self.input_size, self.output_size, self.action_bound, self.network_lr,
+        # self.actor = Actor(self.sess, self.input_size, self.output_size, self.action_bound, self.network_lr,
         #                   self.tau, self.batch_size)
-        #self.critic = Critic(self.sess, self.input_size, self.output_size, self.network_lr, self.tau,
+        # self.critic = Critic(self.sess, self.input_size, self.output_size, self.network_lr, self.tau,
         #                     self.actor.scaled_out)
-        #self.actor_loss = -tf.reduce_mean(self.critic.total_out)
-        #self.actor_train_step = tf.train.AdamOptimizer(self.network_lr).minimize(self.actor_loss)
-        #self.sess.run(tf.global_variables_initializer())
+        # self.actor_loss = -tf.reduce_mean(self.critic.total_out)
+        # self.actor_train_step = tf.train.AdamOptimizer(self.network_lr).minimize(self.actor_loss)
+        # self.sess.run(tf.global_variables_initializer())
 
 
 class Archive:
@@ -146,7 +147,7 @@ class Policy:
         else:
             output1 = np.maximum(np.dot(state, self.w1 + delta[0]) + self.b1 + delta[1], 0)
             output2 = np.maximum(np.dot(output1, self.w2 + delta[2]) + self.b2 + delta[3], 0)
-            action = self.hp.action_bound * np.tanh(
+            action = np.tanh(
                 np.reshape(np.dot(output2, self.w3 + delta[4]) + self.b3 + delta[5], [self.hp.output_size, ]))
         return action * self.hp.action_bound
 
@@ -280,27 +281,35 @@ class NoveltySearch:
             novelty_backward_list = []
             forward_reward_list = []
             backward_reward_list = []
+            bc_forward_list=[]
+            bc_backward_list=[]
             for i in range(self.hp.num_samples):
                 delta = deltas[i]
                 reward_forward, bc_forward = policy.evaluate(delta)
                 neg_delta = [-delta[_] for _ in range(len(delta))]
                 reward_backward, bc_backward = policy.evaluate(neg_delta)
                 forward_reward_list.append(reward_forward)
-                self.archive.add_policy(bc_backward)
-                self.archive.add_policy(bc_forward)
+                # self.archive.add_policy(bc_backward)
+                # self.archive.add_policy(bc_forward)
                 backward_reward_list.append(reward_backward)
                 novelty_forward = self.archive.novelty(bc_forward)
                 novelty_backward = self.archive.novelty(bc_backward)
                 novelty_forward_list.append(novelty_forward)
                 novelty_backward_list.append(novelty_backward)
+                bc_forward_list.append(bc_forward)
+                bc_backward_list.append(bc_backward)
             rollouts = [((forward_reward_list[j] - backward_reward_list[j]) *
                          (1 - self.hp.weight) + (novelty_forward_list[j] - novelty_backward_list[j]) * self.hp.weight,
                          deltas[j]) for j in range(self.hp.num_samples)]
-            sigma_rewards = np.std(
-                (1 - weight) * np.array(forward_reward_list + backward_reward_list) + np.array(
-                    novelty_forward_list + novelty_backward_list) * (weight))
+            for bc in bc_forward_list:
+                self.archive.add_policy(bc)
+            for bc in bc_backward_list:
+                self.archive.add_policy(bc)
+            # sigma_rewards = np.std(
+            #    (1 - weight) * np.array(forward_reward_list + backward_reward_list) + np.array(
+            #        novelty_forward_list + novelty_backward_list) * (weight))
             # policy.update(rollouts, sigma_rewards)
-            policy.adam_update(rollouts, sigma_rewards)
+            policy.adam_update(rollouts, 1)
             meta_population.update(index, policy)
             test_reward, bc = policy.evaluate()
             '''
@@ -327,9 +336,8 @@ class NoveltySearch:
 
 env = AntMazeEnv(maze_id='Maze')
 hp = HP(env=env, input_size=30, output_size=8, total_episodes=1000, episode_length=500, action_bound=30,
-        bc_index=[0, 1], seed=1, weight=0, learning_rate=0.02, num_samples=20, noise=0.1, meta_population_size=3)
+        bc_index=[0, 1], seed=1, weight=0, learning_rate=0.02, num_samples=100, noise=0.03, meta_population_size=3)
 trainer = NoveltySearch(hp)
 reward, novelty = trainer.train()
-pickle.dump(trainer.archive.data,open('novelty_search_es_data','wb'))
-pickle.dump(novelty,open('novelty_search_es_novelty','wb'))
-
+pickle.dump(trainer.archive.data, open('novelty_search_es_data', 'wb'))
+pickle.dump(novelty, open('novelty_search_es_novelty', 'wb'))

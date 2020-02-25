@@ -175,6 +175,28 @@ class DDPG(object):
             self.actor.update_target_network()
             self.critic.update_target_network()
 
+    def train_to_reach(self, iterations, goal, explore_range=1):
+        for i in range(iterations):
+            state, next_state, action, reward, done = self.replay_buffer.sample(self.batch_size)
+            temp_action = np.reshape(self.actor.predict_target(next_state), [self.batch_size, -1])
+            next_action = temp_action
+            next_action = np.clip(next_action, -self.action_bound, self.action_bound)
+            reward = np.reshape(
+                -1 * (np.square(np.sum(np.square(next_state[:, :2] - goal), axis=1)) ** 0.5 > explore_range),
+                [-1, 1])  # reset the reward based on goal
+            done = np.reshape(reward == 0, [-1, 1])
+            target_q = self.critic.predict_target(next_state, next_action)
+
+            y_i = reward + (1 - done) * self.discount_factor * target_q
+
+            self.sess.run(self.critic.train_step, feed_dict={self.critic.inp: state,
+                                                             self.critic.action: np.reshape(action, [self.batch_size,
+                                                                                                     self.action_dim]),
+                                                             self.critic.predicted_q_value: np.reshape(y_i, [-1, 1])})
+            self.sess.run(self.actor_train_step, feed_dict={self.actor.inp: state, self.critic.inp: state})
+            self.actor.update_target_network()
+            self.critic.update_target_network()
+
     def get_action(self, s):
         return self.actor.predict(np.reshape(s, (1, self.actor.s_dim)))
 
@@ -186,6 +208,9 @@ class DDPG(object):
 
     def get_action_target(self, s):
         return self.actor.predict_target(np.reshape(s, (1, self.actor.s_dim)))
+
+    def set_replay_buffer(self, replay_buffer):
+        self.replay_buffer = replay_buffer
 
     def syn_params(self, params_):
         self.sess.run(self.actor.syn_target_op, feed_dict={self.actor.w1: params_[0],
@@ -200,5 +225,3 @@ class DDPG(object):
                                                            self.actor.b2: params_[3],
                                                            self.actor.w3: params_[4],
                                                            self.actor.b3: params_[5]})
-
-

@@ -23,8 +23,8 @@ class Policy:
         # 根据parameter初始化
         self.hp = hp
         self.input_dim, self.output_dim, self.hidden_size = hp.input_dim, hp.output_dim, hp.hidden_size
-        self.param_count = hp.input_dim * hp.hidden_size + 2 * hp.hidden_size + hp.hidden_size * hp.hidden_size + hp.hidden_size * (
-            1 + hp.output_dim)
+        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size + \
+                           self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
         if params is not None:
             assert len(params) == self.param_count
         self.params = params
@@ -48,7 +48,7 @@ class Policy:
         param_list = self.get_detail_params()
         l1 = np.maximum(0, input_state.dot(param_list[0]) + param_list[1])
         l2 = np.maximum(0, l1.dot(param_list[2]) + param_list[3])
-        return np.tanh(l2.dot(param_list[4]) + param_list[5])
+        return np.tanh(l2.dot(param_list[4]) + param_list[5])*30
 
     def get_detail_params(self):
         # 得到w1,b1,w2,b2,w3,b3

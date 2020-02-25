@@ -5,12 +5,15 @@ import tensorflow as tf
 import datetime
 from ant_maze_env import *
 import pickle
+from algorithms.utils import ReplayBuffer
+from algorithms.ddpg import DDPG
 
 
-# run the GA with novelty search, dynamic weights on reward and novelty
+# run the GA with novelty search
 # 2020-2-8
 class HP:
-    def __init__(self, env, seed=1, input_dim=None, output_dim=None, hidden_size=64):
+    def __init__(self, env, seed=1, input_dim=None, output_dim=None, hidden_size=64, learning_step=500,
+                 explore_range=0.5):
         self.env = env
         self.input_dim = self.env.observation_space.shape[0] if input_dim is None else input_dim
         self.output_dim = self.env.action_space.shape[0] if output_dim is None else output_dim
@@ -20,6 +23,10 @@ class HP:
         tf.set_random_seed(seed)
         self.env.seed(seed)
         self.archive = []  # store the final position of the states
+        self.replay_buffer = ReplayBuffer()
+        self.learning_step = learning_step
+        self.explore_range = explore_range
+        self.ddpg_agent = DDPG(state_dim=30, action_dim=8, action_bound=30)
 
     def cal_novelty(self, position):
         #
@@ -38,6 +45,7 @@ class Policy:
         if params is not None:
             assert len(params) == self.param_count
         self.params = params
+        self.ddpg_agent = self.hp.ddpg_agent
 
     def get_params_count(self):
         return self.param_count
@@ -85,6 +93,8 @@ class Policy:
             # env.render()
             action = self.evaluate(obs)
             next_obs, reward, done, _ = env.step(action)
+            self.hp.replay_buffer.add(
+                (obs, next_obs, action, reward, done))  # saving the experience replay for each path
             if np.sqrt(np.sum(np.square(next_obs[:2] - target_goal))) < 0.1:
                 reward = 0
             else:
@@ -100,24 +110,29 @@ class Policy:
             novelty = 0
         return novelty, total_reward, obs[:2]
 
+    def ddpg_update(self, goal):
+        # giving a specific goal, update the policy to reach the goal as quick as possible using the experience replay
+        self.ddpg_agent.syn_params(self.get_detail_params())
+        self.ddpg_agent.set_replay_buffer(deepcopy(self.hp.replay_buffer))
+        self.ddpg_agent.train_to_reach(self.hp.learning_step, goal, self.hp.explore_range)
+        new_params_list = self.ddpg_agent.get_params()
+        new_params = np.hstack([_.flatten() for _ in new_params_list])
+        self.params = new_params
+
 
 env = AntMazeEnv(maze_id='Maze')
 RESTART = False
 restart_file_name = 'novelty_search_final_population'
 episode_num = 1000
 seed = 1
+num_worst = 5
 
 hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.2)
+ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.9)
 
 all_data = []
 final_pos = []
-
-t_best = 0
-sigma = 0.05
-weight = 0
-best_reward = -100000
 for episode in range(episode_num):
     start_time = datetime.datetime.now()
     if RESTART:
@@ -132,31 +147,29 @@ for episode in range(episode_num):
         novelty.append(n)
         reward.append(r)
         position.append(last_position)
-    fitness = [(1 - weight) * novelty[_] + weight * reward[_] for _ in range(len(novelty))]
+    fitness = novelty
     for p in position:
-        policy.hp.archive.append(p)#update novelty archive
+        policy.hp.archive.append(p)  # update novelty archive
     ga.tell(population, fitness)
     best_index = np.argmax(fitness)
-    if reward[best_index] > best_reward:
-        best_reward = reward[best_index]
-        weight = np.minimum(1, weight + sigma)
-        t_best = 0
-    else:
-        t_best += 1
-    if t_best >= 20:
-        weight = np.maximum(0, weight - sigma)
-        t_best = 0
+    # 列出最差的几个agent
+    worst_index = np.argsort(fitness)[:num_worst]
+    # 对最差的几个进行重新学习
+    for idx in worst_index:
+        policy = Policy(hp, params=population[idx])
+        policy.ddpg_update(goal=position[best_index])
+        t_fitness, _, _ = policy.get_fitness()
+        ga.add(parameters=policy.params, fitness=t_fitness)
+        print('improved novelty:', t_fitness)
+
     all_data.append(
-        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index], 'best_novelty':
-            novelty[best_index]})
+        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index]})
     final_pos.append(position[best_index])
     print('######')
     print('Episode ', episode)
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
-    print('Novelty: ', novelty[best_index])
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-    print('weight:', weight)
-pickle.dump(all_data, open('ns_reward_dynamic_' + str(seed), mode='wb'))
-pickle.dump(final_pos, open('ns_final_pos_dynamic_' + str(seed), mode='wb'))
-pickle.dump(population, open('ns_final_population_dynamic_' + str(seed), mode='wb'))
+pickle.dump(all_data, open('garl_reward_' + str(seed), mode='wb'))
+pickle.dump(final_pos, open('garl_final_pos_' + str(seed), mode='wb'))
+pickle.dump(population, open('garl_final_population_' + str(seed), mode='wb'))
