@@ -8,8 +8,9 @@ from algorithms.td3_network import *
 import pickle
 
 
+# add pre-training of the lower policy
 class HP:
-    def __init__(self, env, seed=1, input_dim=30, output_dim=2, action_bound=10, hidden_size=64, pop_size=10):
+    def __init__(self, env, seed=1, input_dim=30, output_dim=2, action_bound=20, hidden_size=64, pop_size=10):
         # HP只是meta-policy的！
         self.env = env
         self.input_dim = self.env.observation_space.shape[0] if input_dim is None else input_dim
@@ -110,6 +111,76 @@ class MetaPolicy:
         self.l_policy = TD3(state_dim=32, action_dim=8, action_bound=30, hidden_size=64)
         self.optimizer = GA(num_params=self.h_policy.get_params_count(), pop_size=hp.pop_size, elite_frac=0.1)
 
+    def pre_train(self, num_episodes):
+        # 训练n个episodes来获得神经网络
+        step = 0
+        done = False
+        env = self.hp.env
+        print('Begin pre-train:')
+        for t in range(num_episodes):
+            obs = env.reset()
+            while not done and step < 500:
+                if step % 10 is 0:
+                    current_goal = np.clip(np.random.randn(2) * 5, -10, 10)
+                experience_replay_buffer = []
+                for i in range(10):
+                    state_goal = np.hstack((obs.flatten(), current_goal))
+                    action = np.clip(self.l_policy.get_action(state_goal) + np.random.randn(8, ) * 10, -30,
+                                     30)  # evaluate primitive action
+                    next_obs, reward, done, _ = env.step(action)
+                    #l_reward = -1 * (np.sqrt(np.sum(np.square(obs[:2] + current_goal - next_obs[:2]))) - 0.01 > 0)
+                    l_reward = -np.sqrt(np.sum(np.square(obs[:2] + current_goal - next_obs[:2])))
+                    l_done = l_reward == 0
+                    next_state_goal = np.hstack((next_obs.flatten(), current_goal))
+                    self.l_policy.store(state_goal, next_state_goal, action, l_reward, l_done)
+                    experience_replay_buffer.append((obs, action, next_obs))
+                    obs = next_obs
+                    step += 1
+                    if l_done is 0:
+                        print('############Reach subgoal!')
+                        break
+                final_replay = experience_replay_buffer[-1]  # 最后一个transition
+                final_goal = (final_replay[2] - final_replay[0])[:2]
+                for s1, a, s2 in experience_replay_buffer:  # 针对每个来说
+                    state_goal = np.hstack((s1.flatten(), final_goal))
+                    next_state_goal = np.hstack((s2.flatten(), final_goal))
+                    r = -1 * (np.sqrt(np.sum(np.square(s1[:2] + final_goal - s2[:2]))) - 0.01 > 0)
+                    d = r == 0
+                    self.l_policy.store(state_goal, next_state_goal, a, r, d)
+            a_loss, c_loss = self.l_policy.train(10)
+            print('Step ', t)
+            print('Actor loss:', a_loss)
+            print('Critic loss:', c_loss)
+        print('End pre-train')
+
+    def get_fitness(self, params):
+        # 根据h_policy的params得到fitness, for 1 rollout.
+        self.h_policy.set_params(params)
+        env = self.hp.env
+        obs = env.reset()
+        h_reward = 0
+        target_goal = np.array([0, 16])
+        for step in range(500):
+            if step % 10 == 0:  # 如果为0则set goal
+                current_goal = self.h_policy.evaluate(obs).flatten()
+            state_goal = np.hstack((obs.flatten(), current_goal))
+            action = self.l_policy.get_action(state_goal)  # evaluate primitive action
+            next_obs, reward, done, _ = env.step(action)
+            l_reward = -1 * (np.sqrt(np.sum(np.square(obs[:2] + current_goal - next_obs[:2]))) - 0.1 > 0)
+            l_done = l_reward == 0
+            next_state_goal = np.hstack((next_obs.flatten(), current_goal))
+            self.l_policy.store(state_goal, next_state_goal, action, l_reward, l_done)
+            if np.sqrt(np.sum(np.square(next_obs[:2] - target_goal))) < 0.1:
+                reward = 0
+            else:
+                reward = -1
+            h_reward += reward
+            obs = next_obs
+            if done:
+                break
+        a_loss, c_loss = self.l_policy.train(5)
+        final_pos = obs[:2]
+        return h_reward, final_pos, a_loss, c_loss
 
     def get_fitness_v2(self, params):
         # 根据h_policy的params得到fitness, for 1 rollout.
@@ -124,16 +195,15 @@ class MetaPolicy:
         while step < 500 and not done:
             if step % 10 is 0:  # 每十次重设一下goal
                 current_goal = self.h_policy.evaluate(obs).flatten()
-            #print('Goal is :', current_goal)
+            # print('Goal is :', current_goal)
             experience_replay_buffer = []
             for i in range(10):  # 每10个测试一下
                 state_goal = np.hstack((obs.flatten(), current_goal))
                 action = self.l_policy.get_action(state_goal)  # evaluate primitive action
                 next_obs, reward, done, _ = env.step(action)
                 step += 1
-                # l_reward = -1 * (np.sqrt(np.sum(np.square(obs[:2] + current_goal - next_obs[:2]))) - 0.01 > 0)
-                l_reward = -np.sqrt(np.sum(np.square(obs[:2] + current_goal - next_obs[:2])))
-                l_done = -l_reward < 0.1
+                l_reward = -1 * (np.sqrt(np.sum(np.square(obs[:2] + current_goal - next_obs[:2]))))
+                l_done = l_reward > -0.1
                 next_state_goal = np.hstack((next_obs.flatten(), current_goal))
                 self.l_policy.store(state_goal, next_state_goal, action, l_reward, l_done)  # normal experience replay
                 experience_replay_buffer.append((obs, action, next_obs))
@@ -148,7 +218,9 @@ class MetaPolicy:
                 penalty -= 100
             if np.sqrt(np.sum(np.square(next_obs[:2] - target_goal))) < 0.1:
                 break
-        a_loss, c_loss = self.l_policy.train(5)
+        # a_loss, c_loss = self.l_policy.train(10)
+        a_loss = 0
+        c_loss = 0
         final_pos = obs[:2]
         return h_reward, final_pos, a_loss, c_loss, penalty
 
@@ -157,6 +229,7 @@ class MetaPolicy:
         final_pos_list = []
         actor_loss = []
         critic_loss = []
+        self.pre_train(1000)
         for episode in range(num_generation):
             start_time = datetime.datetime.now()
             population = self.optimizer.ask()

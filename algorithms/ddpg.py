@@ -132,9 +132,9 @@ class Critic(object):
 
 
 class DDPG(object):
-    def __init__(self, state_dim, action_dim, action_bound=1, discount_factor=1,
+    def __init__(self, state_dim, action_dim, action_bound=1, discount_factor=0.99,
                  seed=1, actor_lr=1e-3, critic_lr=1e-3, batch_size=100, namescope='default',
-                 tau=0.005, policy_noise=0.1, noise_clip=0.5, hidden_size=64):
+                 tau=0.05, policy_noise=0.1, noise_clip=0.5, hidden_size=64):
         np.random.seed(int(seed))
         tf.set_random_seed(seed)
         self.state_dim = state_dim
@@ -175,14 +175,15 @@ class DDPG(object):
             self.actor.update_target_network()
             self.critic.update_target_network()
 
-    def train_to_reach(self, iterations, goal, explore_range=1):
+    def train_to_reach(self, iterations, goal, explore_range):
+        goal = goal + np.random.randn(*goal.shape)*explore_range
         for i in range(iterations):
             state, next_state, action, reward, done = self.replay_buffer.sample(self.batch_size)
             temp_action = np.reshape(self.actor.predict_target(next_state), [self.batch_size, -1])
             next_action = temp_action
             next_action = np.clip(next_action, -self.action_bound, self.action_bound)
             reward = np.reshape(
-                -1 * (np.square(np.sum(np.square(next_state[:, :2] - goal), axis=1)) ** 0.5 > explore_range),
+                -1 * (np.sqrt(np.sum(np.square(next_state[:, :2] - goal), axis=1)) ** 0.5),
                 [-1, 1])  # reset the reward based on goal
             done = np.reshape(reward == 0, [-1, 1])
             target_q = self.critic.predict_target(next_state, next_action)

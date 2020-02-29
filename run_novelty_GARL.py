@@ -12,7 +12,7 @@ from algorithms.ddpg import DDPG
 # run the GA with novelty search
 # 2020-2-8
 class HP:
-    def __init__(self, env, seed=1, input_dim=None, output_dim=None, hidden_size=64, learning_step=500,
+    def __init__(self, env, seed=1, input_dim=None, output_dim=None, hidden_size=64, learning_step=100,
                  explore_range=0.5):
         self.env = env
         self.input_dim = self.env.observation_space.shape[0] if input_dim is None else input_dim
@@ -32,7 +32,7 @@ class HP:
         #
         all_data = np.reshape(self.archive, [-1, 2])
         p = np.reshape(position, [-1, 2])
-        dist = np.sum(np.square(p - all_data), axis=1)
+        dist = np.sqrt(np.sum(np.square(p - all_data), axis=1))
         return np.mean(np.sort(dist)[:15])
 
 
@@ -129,7 +129,7 @@ num_worst = 5
 
 hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.9)
+ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_rate=0.9)
 
 all_data = []
 final_pos = []
@@ -159,7 +159,9 @@ for episode in range(episode_num):
         policy = Policy(hp, params=population[idx])
         policy.ddpg_update(goal=position[best_index])
         t_fitness, _, _ = policy.get_fitness()
-        ga.add(parameters=policy.params, fitness=t_fitness)
+        if t_fitness>fitness[idx]:
+            ga.add(parameters=policy.params, fitness=t_fitness)
+        print('Original novelty:', fitness[idx])
         print('improved novelty:', t_fitness)
 
     all_data.append(
@@ -169,6 +171,7 @@ for episode in range(episode_num):
     print('Episode ', episode)
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
+    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - np.array([0, 16])))))
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
 pickle.dump(all_data, open('garl_reward_' + str(seed), mode='wb'))
 pickle.dump(final_pos, open('garl_final_pos_' + str(seed), mode='wb'))

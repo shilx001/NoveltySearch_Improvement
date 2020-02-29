@@ -25,7 +25,7 @@ class HP:
         #
         all_data = np.reshape(self.archive, [-1, 2])
         p = np.reshape(position, [-1, 2])
-        dist = np.sum(np.square(p - all_data), axis=1)
+        dist = np.sqrt(np.sum(np.square(p - all_data), axis=1))
         return np.mean(np.sort(dist)[:15])
 
 
@@ -110,7 +110,7 @@ seed = 1
 
 hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=200, elite_frac=0.01, mut_rate=0.9)
+ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_rate=0.9)
 
 all_data = []
 final_pos = []
@@ -140,6 +140,7 @@ for episode in range(episode_num):
     print('Episode ', episode)
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
+    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index]-np.array([0,16])))))
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
 pickle.dump(all_data, open('ns_reward_' + str(seed), mode='wb'))
 pickle.dump(final_pos, open('ns_final_pos_' + str(seed), mode='wb'))

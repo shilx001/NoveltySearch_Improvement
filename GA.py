@@ -25,7 +25,7 @@ class GA:
         # individuals
         # 加入了generator
         if generator is None:
-            self.individuals = np.array([np.random.randn(num_params) for i in range(pop_size)])
+            self.individuals = np.array([np.random.randn(num_params)*0.3 for i in range(pop_size)])
         else:
             self.individuals = np.array([generator() for i in range(pop_size)])
         self.fitness = np.zeros(pop_size)

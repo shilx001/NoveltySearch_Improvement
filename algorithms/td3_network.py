@@ -4,7 +4,7 @@ import tensorflow.contrib.slim as slim
 import argparse
 import pprint as pp
 import gym
-from algorithms.utils import *
+from algorithms.utils import ReplayBuffer
 import os
 
 
@@ -38,9 +38,13 @@ class Actor(object):
                                                   tf.multiply(self.target_network_params[i], 1. - self.tau))
              for i in range(len(self.target_network_params))]
 
-        self.w1 = tf.placeholder(shape=[self.s_dim, self.a_dim], dtype=tf.float32)
-        self.b1 = tf.placeholder(shape=[self.a_dim, ], dtype=tf.float32)
-        self.input_parameters = [self.w1, self.b1]
+        self.w1 = tf.placeholder(shape=[self.s_dim, self.hidden_size], dtype=tf.float32)
+        self.b1 = tf.placeholder(shape=[self.hidden_size, ], dtype=tf.float32)
+        self.w2 = tf.placeholder(shape=[self.hidden_size, self.hidden_size], dtype=tf.float32)
+        self.b2 = tf.placeholder(shape=[self.hidden_size, ], dtype=tf.float32)
+        self.w3 = tf.placeholder(shape=[self.hidden_size, self.a_dim], dtype=tf.float32)
+        self.b3 = tf.placeholder(shape=[self.a_dim, ], dtype=tf.float32)
+        self.input_parameters = [self.w1, self.b1, self.w2, self.b2, self.w3, self.b3]
         self.syn_target_op = [self.target_network_params[i].assign(self.input_parameters[i]) for i in
                               range(len(self.target_network_params))]
         self.syn_policy_op = [self.network_params[i].assign(self.input_parameters[i]) for i in
@@ -49,8 +53,10 @@ class Actor(object):
     def create_actor_network(self, scope, reuse=False):
         with tf.variable_scope(scope, reuse=reuse):
             net = self.inp
-            net = slim.fully_connected(net, self.a_dim, activation_fn=None,
+            net = slim.fully_connected(net, self.hidden_size, activation_fn=None,
                                        weights_initializer=tf.truncated_normal_initializer(stddev=0.1))
+            net = slim.fully_connected(net, self.hidden_size, activation_fn=None)
+            net = slim.fully_connected(net, self.a_dim, activation_fn=tf.nn.tanh)
             scaled_out = tf.multiply(net, self.action_bound)
             return net, scaled_out
 
@@ -105,9 +111,13 @@ class Critic(object):
     def create_critic_network(self, scope, actions, reuse=False):
         with tf.variable_scope(scope, reuse=reuse):
             net = tf.concat([self.inp, actions], axis=1)
+            net = slim.fully_connected(net, self.hidden_size)
+            net = slim.fully_connected(net, self.hidden_size)
             net = slim.fully_connected(net, 1, activation_fn=None)
             net1 = net
             net = tf.concat([self.inp, actions], axis=1)
+            net = slim.fully_connected(net, self.hidden_size)
+            net = slim.fully_connected(net, self.hidden_size)
             net = slim.fully_connected(net, 1, activation_fn=None)
             net2 = net
         return net1, net2
@@ -141,7 +151,7 @@ class Critic(object):
 
 
 class TD3(object):
-    def __init__(self, state_dim, action_dim, action_bound, discount_factor=1,
+    def __init__(self, state_dim, action_dim, action_bound, discount_factor=0.99,
                  seed=1, actor_lr=1e-3, critic_lr=1e-3, batch_size=100, namescope='default',
                  tau=0.005, policy_noise=0.1, noise_clip=0.5, hidden_size=300):
         np.random.seed(int(seed))
@@ -159,8 +169,8 @@ class TD3(object):
                            actor_lr, tau, int(batch_size), self.hidden_size, namescope=namescope + str(seed))
         self.critic = Critic(self.sess, state_dim, action_dim, critic_lr, tau,
                              self.actor.scaled_out, self.hidden_size, namescope=namescope + str(seed))
-        actor_loss = -tf.reduce_mean(self.critic.total_out)
-        self.actor_train_step = tf.train.AdamOptimizer(actor_lr).minimize(actor_loss,
+        self.actor_loss = -tf.reduce_mean(self.critic.total_out)
+        self.actor_train_step = tf.train.AdamOptimizer(actor_lr).minimize(self.actor_loss,
                                                                           var_list=self.actor.network_params)
         self.action_bound = action_bound
         self.sess.run(tf.global_variables_initializer())
@@ -168,7 +178,9 @@ class TD3(object):
 
     def train(self, iterations):
         if self.replay_buffer.get_size() < 1000:
-            return
+            return 0, 0
+        actor_loss = []
+        critic_loss = []
         for i in range(iterations):
             state, next_state, action, reward, done = self.replay_buffer.sample(self.batch_size)
             noise = np.random.normal(0, self.policy_noise, size=[self.batch_size, self.action_dim])
@@ -191,6 +203,15 @@ class TD3(object):
                 self.sess.run(self.actor_train_step, feed_dict={self.actor.inp: state, self.critic.inp: state})
                 self.actor.update_target_network()
                 self.critic.update_target_network()
+            actor_loss.append(self.sess.run(self.actor_loss, feed_dict={self.actor.inp: state, self.critic.inp: state}))
+            critic_loss.append(self.sess.run(self.critic.loss, feed_dict={self.critic.inp: state,
+                                                                          self.critic.action: np.reshape(action, [
+                                                                              self.batch_size,
+                                                                              self.action_dim]),
+                                                                          self.critic.predicted_q_value: np.reshape(y_i,
+                                                                                                                    [-1,
+                                                                                                                     1])}))
+        return np.mean(actor_loss), np.mean(critic_loss)
 
     def get_action(self, s):
         return self.actor.predict(np.reshape(s, (1, self.actor.s_dim)))
@@ -198,14 +219,26 @@ class TD3(object):
     def store(self, s, s2, action, r, done_bool):
         self.replay_buffer.add((s, s2, action, r, done_bool))
 
+    def get_replay_length(self):
+        return self.replay_buffer.get_size()
+
     def get_params(self):
-        return self.sess.run(self.actor.network_params[:len(self.actor.network_params)])
+        return self.sess.run(self.actor.target_network_params)
+        # return self.sess.run(self.actor.network_params[:len(self.actor.network_params)])
 
     def get_action_target(self, s):
         return self.actor.predict_target(np.reshape(s, (1, self.actor.s_dim)))
 
     def syn_params(self, params_):
         self.sess.run(self.actor.syn_target_op, feed_dict={self.actor.w1: params_[0],
-                                                           self.actor.b1: params_[1]})
+                                                           self.actor.b1: params_[1],
+                                                           self.actor.w2: params_[2],
+                                                           self.actor.b2: params_[3],
+                                                           self.actor.w3: params_[4],
+                                                           self.actor.b3: params_[5]})
         self.sess.run(self.actor.syn_policy_op, feed_dict={self.actor.w1: params_[0],
-                                                           self.actor.b1: params_[1]})
+                                                           self.actor.b1: params_[1],
+                                                           self.actor.w2: params_[2],
+                                                           self.actor.b2: params_[3],
+                                                           self.actor.w3: params_[4],
+                                                           self.actor.b3: params_[5]})

@@ -7,8 +7,9 @@ from ant_maze_env import *
 from algorithms.td3_network import *
 import pickle
 
+#linear meta control policy
 class HP:
-    def __init__(self, env, seed=1, input_dim=30, output_dim=2, action_bound=30, hidden_size=64, pop_size=100):
+    def __init__(self, env, seed=1, input_dim=30, output_dim=2, action_bound=20, hidden_size=2, pop_size=200):
         self.env = env
         self.input_dim = self.env.observation_space.shape[0] if input_dim is None else input_dim
         self.output_dim = self.env.action_space.shape[0] if output_dim is None else output_dim
@@ -19,6 +20,15 @@ class HP:
         np.random.seed(seed)
         tf.set_random_seed(seed)
         self.env.seed(seed)
+        self.archive = []
+
+    def cal_novelty(self, position):
+        if len(self.archive) < 10:
+            return 0
+        all_data = np.reshape(self.archive, [-1, 2])
+        p = np.reshape(position, [-1, 2])
+        dist = np.sqrt(np.sum(np.square(p - all_data), axis=1))
+        return np.mean(np.sort(dist)[:15])
 
 
 class Policy:
@@ -26,8 +36,7 @@ class Policy:
         # 根据parameter初始化
         self.hp = hp
         self.input_dim, self.output_dim, self.hidden_size = hp.input_dim, hp.output_dim, hp.hidden_size
-        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size + \
-                           self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
+        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size
         if params is not None:
             assert len(params) == self.param_count
         self.params = params
@@ -38,39 +47,19 @@ class Policy:
     def set_params(self, params):
         self.params = params
 
-    def evaluate_tf(self, state):
-        # 得出action值，三层神经网络？用parameter来说
-        sess = tf.Session()
-        input_state = np.reshape(state, [1, self.input_dim])
-        feed_state = tf.placeholder(dtype=tf.float64, shape=[1, self.input_dim])
-        param_list = self.get_detail_params()
-        l1 = tf.nn.relu(tf.matmul(feed_state, param_list[0]) + param_list[1])
-        l2 = tf.nn.relu(tf.matmul(l1, param_list[2])) + param_list[3]
-        output_action = tf.nn.tanh(tf.matmul(l2, param_list[4]) + param_list[5])
-        return sess.run(output_action, feed_dict={feed_state: input_state}) * self.hp.action_bound
-
     def evaluate(self, state):
         input_state = np.reshape(state, [1, self.input_dim])
         param_list = self.get_detail_params()
         l1 = np.maximum(0, input_state.dot(param_list[0]) + param_list[1])
-        l2 = np.maximum(0, l1.dot(param_list[2]) + param_list[3])
-        return np.tanh(l2.dot(param_list[4]) + param_list[5]) * self.hp.action_bound
+        return np.tanh(l1) * self.hp.action_bound
 
     def get_detail_params(self):
         # 得到w1,b1,w2,b2,w3,b3
         w1 = self.params[:self.input_dim * self.hidden_size]
         b1 = self.params[len(w1):len(w1) + self.hidden_size]
-        w2 = self.params[len(w1) + len(b1):len(w1) + len(b1) + self.hidden_size * self.hidden_size]
-        b2 = self.params[len(w1) + len(b1) + len(w2):len(w1) + len(b1) + len(w2) + self.hidden_size]
-        w3 = self.params[len(w1) + len(w2) + len(b1) + len(b2):len(w1) + len(w2) + len(b1) + len(
-            b2) + self.hidden_size * self.output_dim]
-        b3 = self.params[-self.output_dim:]
+
         return [np.reshape(w1, [self.input_dim, self.hidden_size]),
-                np.reshape(b1, [self.hidden_size, ]),
-                np.reshape(w2, [self.hidden_size, self.hidden_size]),
-                np.reshape(b2, [self.hidden_size, ]),
-                np.reshape(w3, [self.hidden_size, self.output_dim]),
-                np.reshape(b3, [self.output_dim, ])]
+                np.reshape(b1, [self.hidden_size, ])]
 
     def get_fitness(self):  # 这个没用了，不需要
         total_reward = 0
@@ -136,17 +125,22 @@ class MetaPolicy:
             population = self.optimizer.ask()
             fitness = []
             final_pos = []
+            novelty = []
             for i in range(self.hp.pop_size):
                 f, p = self.get_fitness(params=population[i])
                 fitness.append(f)
                 final_pos.append(p)
-            self.optimizer.tell(population, fitness)
-            best_idx = np.argmax(fitness)
+                novelty.append(self.hp.cal_novelty(p))
+            for i in final_pos:  # 加入archive
+                self.hp.archive.append(i)
+            self.optimizer.tell(population, novelty)
+            best_idx = np.argmax(novelty)
             fitness_list.append(max(fitness))
             final_pos_list.append(final_pos[best_idx])
             print('######')
             print('Episode ', episode)
             print('Best fitness value: ', max(fitness))
+            print('Best novelty: ', novelty[best_idx])
             print('Final distance:', np.sqrt(np.sum(np.square(final_pos[best_idx] - np.array([0, 16])))))
             print('Running time:', (datetime.datetime.now() - start_time).seconds)
         return fitness_list, final_pos_list
@@ -155,6 +149,6 @@ class MetaPolicy:
 env = AntMazeEnv(maze_id='Maze')
 hp = HP(env=env)
 meta_policy = MetaPolicy(hp)
-fitness,final_pos=meta_policy.train(1000)
-pickle.dump(fitness, open('hga_fitness',mode='wb'))
-pickle.dump(final_pos, open('hga_final_pos',mode='wb'))
+fitness, final_pos = meta_policy.train(1000)
+pickle.dump(fitness, open('hga_novelty_v2_fitness', mode='wb'))
+pickle.dump(final_pos, open('hga_novelty_v2_final_pos', mode='wb'))
