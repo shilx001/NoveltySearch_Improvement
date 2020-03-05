@@ -40,6 +40,9 @@ class Policy:
             assert len(params) == self.param_count
         self.params = params
 
+    def set_params(self,params):
+        self.params = params
+
     def get_params_count(self):
         return self.param_count
 
@@ -124,7 +127,8 @@ for episode in range(episode_num):
     novelty = []
     position = []
     for p in population:
-        n, r, last_position = Policy(hp, params=p).get_fitness()
+        policy.set_params(p)
+        n, r, last_position = policy.get_fitness()
         novelty.append(n)
         reward.append(r)
         position.append(last_position)

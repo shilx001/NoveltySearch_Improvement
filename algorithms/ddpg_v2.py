@@ -87,13 +87,13 @@ class Critic(object):
 
         self.inp = tf.placeholder(shape=[None, self.s_dim], dtype=tf.float32)
         self.action = tf.placeholder(shape=[None, self.a_dim], dtype=tf.float32)
+        self.goal = tf.placeholder(shape=[None, 2], dtype=tf.float32)
 
-        self.total_out = self.create_critic_network(self.namescope + 'main_critic', self.inp_actions)
-        self.out = self.create_critic_network(self.namescope + 'main_critic', self.action,
+        self.total_out = self.create_critic_network(self.namescope + 'main_critic', self.inp_actions, self.goal)
+        self.out = self.create_critic_network(self.namescope + 'main_critic', self.action, self.goal,
                                               reuse=True)  # 要重用里面的变量，所以要设为true,创建时参数一样
 
-        self.target_out = self.create_critic_network(self.namescope + 'target_critic', self.action)
-
+        self.target_out = self.create_critic_network(self.namescope + 'target_critic', self.action, self.goal)
         self.network_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.namescope + 'main_critic')
         self.target_network_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES,
                                                        self.namescope + 'target_critic')  # 得到target的variables
@@ -107,9 +107,9 @@ class Critic(object):
         self.loss = tf.reduce_mean(tf.square(self.out - self.predicted_q_value))
         self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, var_list=self.network_params)
 
-    def create_critic_network(self, scope, actions, reuse=False):
+    def create_critic_network(self, scope, actions, goal, reuse=False):
         with tf.variable_scope(scope, reuse=reuse):
-            net = tf.concat([self.inp, actions], axis=1)
+            net = tf.concat([self.inp, actions, goal], axis=1)
             net = slim.fully_connected(net, self.hidden_size)
             net = slim.fully_connected(net, self.hidden_size)
             net = slim.fully_connected(net, 1, activation_fn=None)
@@ -118,23 +118,25 @@ class Critic(object):
     def update_target_network(self):
         self.sess.run(self.update_target_network_params)
 
-    def predict(self, inputs, action):
+    def predict(self, inputs, action, goal):
         return self.sess.run(self.out, feed_dict={
             self.inp: inputs,
-            self.action: action
+            self.action: action,
+            self.goal: goal
         })
 
-    def predict_target(self, inputs, action):
+    def predict_target(self, inputs, action, goal):
         return self.sess.run(self.target_out, feed_dict={
             self.inp: inputs,
-            self.action: action
+            self.action: action,
+            self.goal: goal
         })
 
 
 class DDPG(object):
     def __init__(self, state_dim, action_dim, action_bound=1, discount_factor=0.99,
-                 seed=1, actor_lr=1e-4, critic_lr=1e-4, batch_size=32, namescope='default',
-                 tau=0.005, policy_noise=0.1, noise_clip=0.5, hidden_size=64):
+                 seed=1, actor_lr=1e-3, critic_lr=1e-3, batch_size=32, namescope='default',
+                 tau=0.05, policy_noise=0.1, noise_clip=0.5, hidden_size=64):
         np.random.seed(int(seed))
         tf.set_random_seed(seed)
         self.state_dim = state_dim
@@ -150,53 +152,48 @@ class DDPG(object):
                            actor_lr, tau, int(batch_size), self.hidden_size, namescope=namescope + str(seed))
         self.critic = Critic(self.sess, state_dim, action_dim, critic_lr, tau,
                              self.actor.scaled_out, self.hidden_size, namescope=namescope + str(seed))
-        actor_loss = -tf.reduce_mean(self.critic.total_out)
-        self.actor_train_step = tf.train.AdamOptimizer(actor_lr).minimize(actor_loss,
+        self.actor_loss = -tf.reduce_mean(self.critic.total_out)
+        self.actor_train_step = tf.train.AdamOptimizer(actor_lr).minimize(self.actor_loss,
                                                                           var_list=self.actor.network_params)
         self.action_bound = action_bound
         self.sess.run(tf.global_variables_initializer())
         self.replay_buffer = algorithms.utils.ReplayBuffer()
 
-    def train(self, iterations):
-        for i in range(iterations):
-            state, next_state, action, reward, done = self.replay_buffer.sample(self.batch_size)
-            temp_action = np.reshape(self.actor.predict_target(next_state), [self.batch_size, -1])
-            next_action = temp_action
-            next_action = np.clip(next_action, -self.action_bound, self.action_bound)
-            target_q = self.critic.predict_target(next_state, next_action)
-
-            y_i = reward + (1 - done) * self.discount_factor * target_q
-
-            self.sess.run(self.critic.train_step, feed_dict={self.critic.inp: state,
-                                                             self.critic.action: np.reshape(action, [self.batch_size,
-                                                                                                     self.action_dim]),
-                                                             self.critic.predicted_q_value: np.reshape(y_i, [-1, 1])})
-            self.sess.run(self.actor_train_step, feed_dict={self.actor.inp: state, self.critic.inp: state})
-            self.actor.update_target_network()
-            self.critic.update_target_network()
-
     def train_to_reach(self, iterations, goal, explore_range):
-        goal = goal + np.random.randn(*goal.shape)*explore_range
+        goal += np.random.randn(*goal.shape) * explore_range
+        goal = np.reshape(goal, [1, 2]) * np.ones([self.batch_size, 2])
+        actor_loss = []
+        critic_loss = []
         for i in range(iterations):
             state, next_state, action, reward, done = self.replay_buffer.sample(self.batch_size)
             temp_action = np.reshape(self.actor.predict_target(next_state), [self.batch_size, -1])
             next_action = temp_action
             next_action = np.clip(next_action, -self.action_bound, self.action_bound)
             reward = np.reshape(
-                -1 * (np.sqrt(np.sum(np.square(next_state[:, :2] - goal), axis=1)) ** 0.5),
+                -1 * (np.sqrt(np.sum(np.square(next_state[:, :2] - goal), axis=1))),
                 [-1, 1])  # reset the reward based on goal
             done = np.reshape(reward == 0, [-1, 1])
-            target_q = self.critic.predict_target(next_state, next_action)
+            target_q = self.critic.predict_target(next_state, next_action, goal)
 
             y_i = reward + (1 - done) * self.discount_factor * target_q
 
             self.sess.run(self.critic.train_step, feed_dict={self.critic.inp: state,
                                                              self.critic.action: np.reshape(action, [self.batch_size,
                                                                                                      self.action_dim]),
-                                                             self.critic.predicted_q_value: np.reshape(y_i, [-1, 1])})
-            self.sess.run(self.actor_train_step, feed_dict={self.actor.inp: state, self.critic.inp: state})
+                                                             self.critic.predicted_q_value: np.reshape(y_i, [-1, 1]),
+                                                             self.critic.goal: goal})
+            self.sess.run(self.actor_train_step,
+                          feed_dict={self.actor.inp: state, self.critic.inp: state, self.critic.goal: goal})
             self.actor.update_target_network()
             self.critic.update_target_network()
+            actor_loss.append(self.sess.run(self.actor_loss,
+                              feed_dict={self.actor.inp: state, self.critic.inp: state, self.critic.goal: goal}))
+            critic_loss.append(self.sess.run(self.critic.loss, feed_dict={self.critic.inp: state,
+                                                             self.critic.action: np.reshape(action, [self.batch_size,
+                                                                                                     self.action_dim]),
+                                                             self.critic.predicted_q_value: np.reshape(y_i, [-1, 1]),
+                                                             self.critic.goal: goal}))
+        return np.mean(actor_loss),np.mean(critic_loss)
 
     def get_action(self, s):
         return self.actor.predict(np.reshape(s, (1, self.actor.s_dim)))

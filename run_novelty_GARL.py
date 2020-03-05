@@ -6,14 +6,15 @@ import datetime
 from ant_maze_env import *
 import pickle
 from algorithms.utils import ReplayBuffer
-from algorithms.ddpg import DDPG
+# from algorithms.ddpg import DDPG
+from algorithms.ddpg_v2 import DDPG
 
 
 # run the GA with novelty search
 # 2020-2-8
 class HP:
     def __init__(self, env, seed=1, input_dim=None, output_dim=None, hidden_size=64, learning_step=100,
-                 explore_range=0.5):
+                 explore_range=0):
         self.env = env
         self.input_dim = self.env.observation_space.shape[0] if input_dim is None else input_dim
         self.output_dim = self.env.action_space.shape[0] if output_dim is None else output_dim
@@ -26,7 +27,7 @@ class HP:
         self.replay_buffer = ReplayBuffer()
         self.learning_step = learning_step
         self.explore_range = explore_range
-        self.ddpg_agent = DDPG(state_dim=30, action_dim=8, action_bound=30)
+        self.ddpg_agent = DDPG(state_dim=30, action_dim=8, action_bound=30, actor_lr=1e-4, critic_lr=1e-4)
 
     def cal_novelty(self, position):
         #
@@ -41,11 +42,15 @@ class Policy:
         # 根据parameter初始化
         self.hp = hp
         self.input_dim, self.output_dim, self.hidden_size = hp.input_dim, hp.output_dim, hp.hidden_size
-        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size + self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
+        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size +\
+                           self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
         if params is not None:
             assert len(params) == self.param_count
         self.params = params
         self.ddpg_agent = self.hp.ddpg_agent
+
+    def set_params(self,params):
+        self.params = params
 
     def get_params_count(self):
         return self.param_count
@@ -114,10 +119,11 @@ class Policy:
         # giving a specific goal, update the policy to reach the goal as quick as possible using the experience replay
         self.ddpg_agent.syn_params(self.get_detail_params())
         self.ddpg_agent.set_replay_buffer(deepcopy(self.hp.replay_buffer))
-        self.ddpg_agent.train_to_reach(self.hp.learning_step, goal, self.hp.explore_range)
+        a_loss, c_loss = self.ddpg_agent.train_to_reach(self.hp.learning_step, goal, self.hp.explore_range)
         new_params_list = self.ddpg_agent.get_params()
         new_params = np.hstack([_.flatten() for _ in new_params_list])
         self.params = new_params
+        return a_loss, c_loss
 
 
 env = AntMazeEnv(maze_id='Maze')
@@ -133,6 +139,7 @@ ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_r
 
 all_data = []
 final_pos = []
+
 for episode in range(episode_num):
     start_time = datetime.datetime.now()
     if RESTART:
@@ -143,7 +150,8 @@ for episode in range(episode_num):
     novelty = []
     position = []
     for p in population:
-        n, r, last_position = Policy(hp, params=p).get_fitness()
+        policy.set_params(p)
+        n, r, last_position = policy.get_fitness()
         novelty.append(n)
         reward.append(r)
         position.append(last_position)
@@ -155,17 +163,37 @@ for episode in range(episode_num):
     # 列出最差的几个agent
     worst_index = np.argsort(fitness)[:num_worst]
     # 对最差的几个进行重新学习
+    actor_loss = []
+    critic_loss = []
+    distance_to_goal = []
+    new_bc = []
+    origin_novelty = []
+    improved_novelty = []
+    current_goal = position[best_index]
     for idx in worst_index:
-        policy = Policy(hp, params=population[idx])
-        policy.ddpg_update(goal=position[best_index])
-        t_fitness, _, _ = policy.get_fitness()
-        if t_fitness>fitness[idx]:
-            ga.add(parameters=policy.params, fitness=t_fitness)
+        policy.set_params(population[best_index])
+        a_loss, c_loss = policy.ddpg_update(goal=position[best_index])
+        t_fitness, _, bc = policy.get_fitness()
+        # if t_fitness > fitness[idx]:
+        ga.add_v2(index=idx, parameters=policy.params)
+        new_bc.append(bc)
+        # policy.hp.archive.append(bc)
         print('Original novelty:', fitness[idx])
+        origin_novelty.append(fitness[idx])
         print('improved novelty:', t_fitness)
+        improved_novelty.append(t_fitness)
+        print('Distance to current goal:', np.sqrt(np.sum(np.square(position[best_index] - bc))))
+        actor_loss.append(a_loss)
+        critic_loss.append(c_loss)
+        distance_to_goal.append(np.sqrt(np.sum(np.square(position[best_index] - bc))))
+        print('Actor loss:', a_loss)
+        print('Critic loss:', c_loss)
 
     all_data.append(
-        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index]})
+        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index],
+         'original_novelty': origin_novelty, 'improved_novelty': improved_novelty, 'distance_to_goal': distance_to_goal,
+         'actor_loss': actor_loss, 'critic_loss': critic_loss, 'current_goal': current_goal, 'new_bc': new_bc},
+    )
     final_pos.append(position[best_index])
     print('######')
     print('Episode ', episode)
@@ -173,6 +201,6 @@ for episode in range(episode_num):
     print('Best reward: ', reward[best_index])
     print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - np.array([0, 16])))))
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open('garl_reward_' + str(seed), mode='wb'))
-pickle.dump(final_pos, open('garl_final_pos_' + str(seed), mode='wb'))
-pickle.dump(population, open('garl_final_population_' + str(seed), mode='wb'))
+pickle.dump(all_data, open('garl_reward_v5_10', mode='wb'))
+pickle.dump(final_pos, open('garl_final_pos_v5_10', mode='wb'))
+pickle.dump(population, open('garl_final_population_v5_10', mode='wb'))
