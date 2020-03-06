@@ -174,8 +174,8 @@ for episode in range(episode_num):
         policy.set_params(population[best_index])
         a_loss, c_loss = policy.ddpg_update(goal=position[best_index])
         t_fitness, _, bc = policy.get_fitness()
-        # if t_fitness > fitness[idx]:
-        ga.add_v2(index=idx, parameters=policy.params)
+        if t_fitness > fitness[idx]:
+            ga.add_v2(index=idx, parameters=policy.params)
         new_bc.append(bc)
         # policy.hp.archive.append(bc)
         print('Original novelty:', fitness[idx])

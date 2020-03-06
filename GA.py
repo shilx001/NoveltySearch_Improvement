@@ -67,8 +67,10 @@ class GA:
         self.fitness[index] = fitness
         self.order = np.argsort(self.fitness)
 
-    def add_v2(self, index, parameters):
+    def add_v2(self, index, parameters, fitness):
         self.individuals[index] = deepcopy(parameters)
+        self.fitness[index] = fitness
+        self.order = np.argsort(self.fitness)
 
     def set_new_params(self, new_params):
         """
