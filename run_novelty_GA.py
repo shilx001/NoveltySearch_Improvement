@@ -6,6 +6,18 @@ import datetime
 from ant_maze_env import *
 import pickle
 
+TASK_NAME = 'Fall'
+VERSION = '1'
+POPULATION = 10
+EPISODE_NUMBER = 1000
+
+if TASK_NAME is 'Maze':
+    TARGET_GOAL = np.array([0, 16])
+elif TASK_NAME is 'Push':
+    TARGET_GOAL = np.array([0, 19])
+elif TASK_NAME is 'Fall':
+    TARGET_GOAL = np.array([0, 27])
+
 
 # run the GA with novelty search
 # 2020-2-8
@@ -40,7 +52,7 @@ class Policy:
             assert len(params) == self.param_count
         self.params = params
 
-    def set_params(self,params):
+    def set_params(self, params):
         self.params = params
 
     def get_params_count(self):
@@ -54,7 +66,7 @@ class Policy:
         param_list = self.get_detail_params()
         l1 = tf.nn.relu(tf.matmul(feed_state, param_list[0]) + param_list[1])
         l2 = tf.nn.relu(tf.matmul(l1, param_list[2])) + param_list[3]
-        output_action = tf.nn.tanh(tf.matmul(l2, param_list[4]) + param_list[5])*30
+        output_action = tf.nn.tanh(tf.matmul(l2, param_list[4]) + param_list[5]) * 30
         return sess.run(output_action, feed_dict={feed_state: input_state})
 
     def evaluate(self, state):
@@ -82,18 +94,16 @@ class Policy:
 
     def get_fitness(self):
         total_reward = 0
-        target_goal = np.array([0, 16])
         env = self.hp.env
         obs = env.reset()
         for step in range(500):
             # env.render()
             action = self.evaluate(obs)
             next_obs, reward, done, _ = env.step(action)
-            if np.sqrt(np.sum(np.square(next_obs[:2] - target_goal))) < 0.1:
+            if np.sqrt(np.sum(np.square(next_obs[:2] - TARGET_GOAL))) < 0.1:
                 reward = 0
             else:
                 reward = -1
-            # reward = -np.sqrt(np.sum(np.square(next_obs[:2] - target_goal)))
             obs = next_obs
             total_reward += reward
             if done:
@@ -105,15 +115,15 @@ class Policy:
         return novelty, total_reward, obs[:2]
 
 
-env = AntMazeEnv(maze_id='Maze')
+env = AntMazeEnv(maze_id=TASK_NAME)
 RESTART = False
 restart_file_name = 'novelty_search_final_population'
-episode_num = 1000
+episode_num = EPISODE_NUMBER
 seed = 1
 
 hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_rate=0.9)
+ga = GA(num_params=policy.get_params_count(), pop_size=POPULATION, elite_frac=0.1, mut_rate=0.9)
 
 all_data = []
 final_pos = []
@@ -133,19 +143,21 @@ for episode in range(episode_num):
         reward.append(r)
         position.append(last_position)
     fitness = novelty
+    initial_bc = position
     for p in position:
         policy.hp.archive.append(p)  # update novelty archive
     ga.tell(population, fitness)
     best_index = np.argmax(fitness)
     all_data.append(
-        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index]})
+        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index],
+         'initial_bc': position, 'novelty':fitness})
     final_pos.append(position[best_index])
     print('######')
     print('Episode ', episode)
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
-    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index]-np.array([0,16])))))
+    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - TARGET_GOAL))))
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open('ns_reward_' + str(seed), mode='wb'))
-pickle.dump(final_pos, open('ns_final_pos_' + str(seed), mode='wb'))
-pickle.dump(population, open('ns_final_population_' + str(seed), mode='wb'))
+pickle.dump(all_data, open(TASK_NAME + '_ns_reward_' + str(seed), mode='wb'))
+pickle.dump(final_pos, open(TASK_NAME + '_ns_final_pos_' + str(seed), mode='wb'))
+# pickle.dump(population, open('ns_final_population_' + str(seed), mode='wb'))

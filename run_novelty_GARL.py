@@ -9,6 +9,18 @@ from algorithms.utils import ReplayBuffer
 # from algorithms.ddpg import DDPG
 from algorithms.ddpg_v2 import DDPG
 
+TASK_NAME = 'Push'
+VERSION = '1'
+POPULATION = 10
+REPLACE = 10
+EPISODE_NUMBER = 1000
+if TASK_NAME is 'Maze':
+    TARGET_GOAL = np.array([0, 16])
+elif TASK_NAME is 'Push':
+    TARGET_GOAL = np.array([0, 19])
+elif TASK_NAME is 'Fall':
+    TARGET_GOAL = np.array([0, 27])
+
 
 # run the GA with novelty search
 # 2020-2-8
@@ -42,14 +54,14 @@ class Policy:
         # 根据parameter初始化
         self.hp = hp
         self.input_dim, self.output_dim, self.hidden_size = hp.input_dim, hp.output_dim, hp.hidden_size
-        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size +\
+        self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size + \
                            self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
         if params is not None:
             assert len(params) == self.param_count
         self.params = params
         self.ddpg_agent = self.hp.ddpg_agent
 
-    def set_params(self,params):
+    def set_params(self, params):
         self.params = params
 
     def get_params_count(self):
@@ -91,7 +103,6 @@ class Policy:
 
     def get_fitness(self):
         total_reward = 0
-        target_goal = np.array([0, 16])
         env = self.hp.env
         obs = env.reset()
         for step in range(500):
@@ -100,7 +111,7 @@ class Policy:
             next_obs, reward, done, _ = env.step(action)
             self.hp.replay_buffer.add(
                 (obs, next_obs, action, reward, done))  # saving the experience replay for each path
-            if np.sqrt(np.sum(np.square(next_obs[:2] - target_goal))) < 0.1:
+            if np.sqrt(np.sum(np.square(next_obs[:2] - TARGET_GOAL))) < 0.1:
                 reward = 0
             else:
                 reward = -1
@@ -126,16 +137,16 @@ class Policy:
         return a_loss, c_loss
 
 
-env = AntMazeEnv(maze_id='Maze')
+env = AntMazeEnv(maze_id=TASK_NAME)
 RESTART = False
 restart_file_name = 'novelty_search_final_population'
-episode_num = 1000
+episode_num = EPISODE_NUMBER
 seed = 1
-num_worst = 5
+num_worst = REPLACE
 
 hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-ga = GA(num_params=policy.get_params_count(), pop_size=10, elite_frac=0.1, mut_rate=0.9)
+ga = GA(num_params=policy.get_params_count(), pop_size=POPULATION, elite_frac=0.1, mut_rate=0.9)
 
 all_data = []
 final_pos = []
@@ -170,14 +181,15 @@ for episode in range(episode_num):
     origin_novelty = []
     improved_novelty = []
     current_goal = position[best_index]
+    initial_bc = position
     for idx in worst_index:
-        policy.set_params(population[best_index])
+        policy.set_params(population[idx])
         a_loss, c_loss = policy.ddpg_update(goal=position[best_index])
         t_fitness, _, bc = policy.get_fitness()
-        if t_fitness > fitness[idx]:
-            ga.add_v2(index=idx, parameters=policy.params)
+        # if t_fitness > fitness[idx]:
+        ga.add_v2(index=idx, parameters=policy.params, fitness=t_fitness)
         new_bc.append(bc)
-        # policy.hp.archive.append(bc)
+        policy.hp.archive.append(bc)
         print('Original novelty:', fitness[idx])
         origin_novelty.append(fitness[idx])
         print('improved novelty:', t_fitness)
@@ -192,15 +204,16 @@ for episode in range(episode_num):
     all_data.append(
         {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index],
          'original_novelty': origin_novelty, 'improved_novelty': improved_novelty, 'distance_to_goal': distance_to_goal,
-         'actor_loss': actor_loss, 'critic_loss': critic_loss, 'current_goal': current_goal, 'new_bc': new_bc},
+         'actor_loss': actor_loss, 'critic_loss': critic_loss, 'current_goal': current_goal, 'new_bc': new_bc,
+         'initial_bc': initial_bc, 'novelty': fitness},
     )
     final_pos.append(position[best_index])
-    print('######')
+    print('######' + TASK_NAME)
     print('Episode ', episode)
     print('Best fitness value: ', fitness[best_index])
     print('Best reward: ', reward[best_index])
-    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - np.array([0, 16])))))
+    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - TARGET_GOAL))))
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open('garl_reward_v5_10', mode='wb'))
-pickle.dump(final_pos, open('garl_final_pos_v5_10', mode='wb'))
-pickle.dump(population, open('garl_final_population_v5_10', mode='wb'))
+pickle.dump(all_data, open(TASK_NAME + '_garl_reward_v' + VERSION, mode='wb'))
+pickle.dump(final_pos, open(TASK_NAME + '_garl_final_pos_v' + VERSION, mode='wb'))
+# pickle.dump(population, open('garl_final_population_v1_10', mode='wb'))
