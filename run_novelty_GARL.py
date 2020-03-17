@@ -9,9 +9,9 @@ from algorithms.utils import ReplayBuffer
 # from algorithms.ddpg import DDPG
 from algorithms.ddpg_v2 import DDPG
 
-TASK_NAME = 'Push'
+TASK_NAME = 'Maze'
 VERSION = '1'
-POPULATION = 10
+POPULATION = 50
 REPLACE = 10
 EPISODE_NUMBER = 1000
 if TASK_NAME is 'Maze':

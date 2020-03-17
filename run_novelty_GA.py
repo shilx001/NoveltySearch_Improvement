@@ -6,9 +6,9 @@ import datetime
 from ant_maze_env import *
 import pickle
 
-TASK_NAME = 'Fall'
+TASK_NAME = 'Maze'
 VERSION = '1'
-POPULATION = 10
+POPULATION = 50
 EPISODE_NUMBER = 1000
 
 if TASK_NAME is 'Maze':
@@ -158,6 +158,6 @@ for episode in range(episode_num):
     print('Best reward: ', reward[best_index])
     print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - TARGET_GOAL))))
     print('Running time:', (datetime.datetime.now() - start_time).seconds)
-pickle.dump(all_data, open(TASK_NAME + '_ns_reward_' + str(seed), mode='wb'))
-pickle.dump(final_pos, open(TASK_NAME + '_ns_final_pos_' + str(seed), mode='wb'))
+pickle.dump(all_data, open(TASK_NAME + '_ns_reward_v' + VERSION, mode='wb'))
+pickle.dump(final_pos, open(TASK_NAME + '_ns_final_pos_v' + VERSION, mode='wb'))
 # pickle.dump(population, open('ns_final_population_' + str(seed), mode='wb'))
