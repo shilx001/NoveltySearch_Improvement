@@ -150,7 +150,7 @@ for episode in range(episode_num):
     best_index = np.argmax(fitness)
     all_data.append(
         {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': reward[best_index],
-         'initial_bc': position, 'novelty':fitness})
+         'initial_bc': position, 'novelty': fitness})
     final_pos.append(position[best_index])
     print('######')
     print('Episode ', episode)
