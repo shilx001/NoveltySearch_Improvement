@@ -317,9 +317,9 @@ class NoveltySearch:
 env = AntMazeEnv(maze_id='Maze')
 observation_dim = 30
 action_dim = 8
-hp = HP(env=env, input_size=observation_dim, output_size=action_dim, total_episodes=1000, episode_length=500,
+hp = HP(env=env, input_size=observation_dim, output_size=action_dim, total_episodes=1, episode_length=500,
         bc_index=[0, 1], normalizer=Normalizer(nb_inputs=observation_dim), seed=1, action_bound=30,
         weight=WEIGHT, learning_rate=LR, num_samples=50, noise=SIGMA, meta_population_size=3)
 trainer = NoveltySearch(hp)
 all_data = trainer.train()
-pickle.dump(all_data, open('ns_es_v' + VERSION, 'wb'))
+pickle.dump(all_data, open('ns_es_v' + str(VERSION), 'wb'))
