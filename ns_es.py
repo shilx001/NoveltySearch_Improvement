@@ -302,7 +302,7 @@ class NoveltySearch:
                 archive.add_policy(bc)
             test_novelty = archive.novelty(test_bc)
             all_data.append(
-                {'all_bc': bc_list, 'best_bc': bc, 'all_novelty': novelty_forward_list + novelty_backward_list})
+                {'all_bc': bc_list, 'best_bc': test_bc, 'all_novelty': novelty_forward_list + novelty_backward_list})
             print('#######')
             print('Episode ', t)
             # print('Total reward is: ', test_reward)

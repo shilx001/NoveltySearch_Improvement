@@ -1,16 +1,10 @@
 import numpy as np
+from GA import *
 import gym
 import tensorflow as tf
 import datetime
 from ant_maze_env import *
 import pickle
-import autograd.numpy as anp
-from pymoo.model.problem import Problem
-from pymoo.algorithms.nsga2 import NSGA2
-from pymoo.factory import get_sampling, get_crossover, get_mutation, get_termination
-from pymoo.optimize import minimize
-
-# novelty search with local competitions
 
 TASK_NAME = 'Maze'
 VERSION = '1'
@@ -38,16 +32,6 @@ class HP:
         tf.set_random_seed(seed)
         self.env.seed(seed)
         self.archive = []  # store the final position of the states
-        self.count = 0  # calculate the number of episodes
-        self.current_bc_list = []
-        self.bc_list = []
-
-    def cal_novelty(self, position):
-        # calculate novelty
-        all_data = np.reshape(self.archive, [-1, 2])
-        p = np.reshape(position, [-1, 2])
-        dist = np.sqrt(np.sum(np.square(p - all_data), axis=1))
-        return np.mean(np.sort(dist)[:15])
 
     def cal_novelty_v2(self, position):
         # calculate novelty and local competition
@@ -60,12 +44,6 @@ class HP:
         lc = np.sum(np.array(distance_to_goal) < 1) / 15.0
         return np.mean(np.sort(dist)[:15]), lc
 
-    def get_update_signal(self):
-        if self.count % 50 is 0:
-            return True
-        else:
-            return False
-
 
 class Policy:
     def __init__(self, hp, params=None):
@@ -75,7 +53,6 @@ class Policy:
         self.param_count = hp.input_dim * hp.hidden_size + self.hidden_size + self.hidden_size * self.hidden_size + \
                            self.hidden_size + self.hidden_size * self.output_dim + self.output_dim
         if params is not None:
-            print(self.param_count)
             assert len(params) == self.param_count
         self.params = params
 
@@ -127,7 +104,7 @@ class Policy:
             # env.render()
             action = self.evaluate(obs)
             next_obs, reward, done, _ = env.step(action)
-            if np.sqrt(np.sum(np.square(next_obs[:2] - TARGET_GOAL))) < 0.1:
+            if np.sqrt(np.sum(np.square(next_obs[:2] - TARGET_GOAL))) < 1:
                 reward = 1
             else:
                 reward = 0
@@ -140,49 +117,52 @@ class Policy:
         else:
             novelty = 0
             lc = 0
-        self.hp.count += 1
-        return -novelty, lc, obs[:2]
-
-
-class MyProblem(Problem):
-    def __init__(self, n_var, hp):
-        super().__init__(n_var=n_var, n_obj=2, n_constr=0,
-                         xl=anp.array(-10000 * np.ones([n_var, ])),
-                         xu=anp.array(10000 * np.ones([n_var, ])))
-        self.hp = hp
-
-    def _evaluate(self, x, out, *args, **kwargs):
-        novelty = []
-        fitness = []
-        for x1 in x:
-            policy = Policy(hp=self.hp, params=x1)
-            n, f, b = policy.get_fitness()
-            novelty.append(n)
-            fitness.append(f)
-            self.hp.current_bc_list.append(b)
-        out["F"] = anp.column_stack([fitness, novelty])
-        # out["G"] = anp.column_stack(np.zeros([50,2]))
-        if self.hp.get_update_signal():
-            # 存储每一个当前bc list中的bc进novelty
-            best_idx = np.argmin(novelty)
-            print('########')
-            print('Generation:', int(self.hp.count / 50))
-            print('Max novelty is:', np.min(novelty))
-            print('Position:', self.hp.current_bc_list[best_idx])
-            print('Archive length:', len(self.hp.archive))
-            for bc in self.hp.current_bc_list:
-                self.hp.archive.append(bc)
-            self.hp.current_bc_list = []
+        return novelty, lc, obs[:2]
 
 
 env = AntMazeEnv(maze_id=TASK_NAME)
-hp = HP(env=env, input_dim=30, output_dim=8)
+RESTART = False
+restart_file_name = 'novelty_search_final_population'
+episode_num = EPISODE_NUMBER
+seed = 1
+
+hp = HP(env=env, input_dim=30, output_dim=8, seed=seed)
 policy = Policy(hp)
-algorithm = NSGA2(pop_size=50, n_offsprings=50, sampling=get_sampling("real_random"),
-                  crossover=get_crossover("real_sbx", prob=0, eta=15),
-                  mutation=get_mutation("real_pm", prob=0.9, eta=20),
-                  eliminate_duplicates=True)
-termination = get_termination("n_gen", 1000)
-problem = MyProblem(n_var=policy.get_params_count(), hp=hp)
-res = minimize(problem, algorithm, termination, seed=1)
-pickle.dump(problem.hp.archive, open(TASK_NAME + '_nslc_' + str(VERSION), mode='wb'))
+ga = GA(num_params=policy.get_params_count(), pop_size=POPULATION, elite_frac=0.1, mut_rate=0.9)
+
+all_data = []
+final_pos = []
+for episode in range(episode_num):
+    start_time = datetime.datetime.now()
+    if RESTART:
+        population = pickle.load(open(restart_file_name, mode='rb'))
+    else:
+        population = ga.ask()
+    lc = []
+    novelty = []
+    position = []
+    for p in population:
+        policy.set_params(p)
+        n, r, last_position = policy.get_fitness()
+        novelty.append(n)
+        lc.append(r)
+        position.append(last_position)
+    fitness = np.array(novelty)+np.array(lc)
+    initial_bc = position
+    for p in position:
+        policy.hp.archive.append(p)  # update novelty archive
+    ga.tell(population, fitness)
+    best_index = np.argmax(fitness)
+    all_data.append(
+        {'episode': episode, 'best_fitness': fitness[best_index], 'best_reward': lc[best_index],
+         'initial_bc': position, 'novelty': fitness})
+    final_pos.append(position[best_index])
+    print('######')
+    print('Episode ', episode)
+    print('Best fitness value: ', fitness[best_index])
+    print('Best lc: ', lc[best_index])
+    print('Final distance: ', np.sqrt(np.sum(np.square(position[best_index] - TARGET_GOAL))))
+    print('Running time:', (datetime.datetime.now() - start_time).seconds)
+pickle.dump(all_data, open(TASK_NAME + '_qd_reward_v' + VERSION, mode='wb'))
+pickle.dump(final_pos, open(TASK_NAME + '_qd_final_pos_v' + VERSION, mode='wb'))
+# pickle.dump(population, open('ns_final_population_' + str(seed), mode='wb'))
